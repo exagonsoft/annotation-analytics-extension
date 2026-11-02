@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Annotation Analytics</title>
+  <rect x="3" y="3" width="122" height="122" rx="27" fill="#141c30"/>
+  <path d="M29 27h47l23 23v48a8 8 0 0 1-8 8H37a8 8 0 0 1-8-8Z" fill="#24334e"/>
+  <path d="M76 27v18a5 5 0 0 0 5 5h18" fill="#51617f"/>
+  <rect x="40" y="73" width="12" height="23" rx="4" fill="#a78bfa"/>
+  <rect x="59" y="59" width="12" height="37" rx="4" fill="#818cf8"/>
+  <rect x="78" y="66" width="12" height="30" rx="4" fill="#22d3ee"/>
+  <path d="m39 49 6 6 13-14" fill="none" stroke="#67e8f9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

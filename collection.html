@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Annotation Analytics - Background collection</title>
+    <link rel="icon" type="image/png" href="/icons/icon32.png" />
+  </head>
+  <body>
+    <main>
+      <h1>Background collection</h1>
+      <p>This user-started ingestion job updates your local database. Dashboard and popup read saved data independently.</p>
+      <p>Keep this tab, the selected website tab and its DevTools open. This tab closes when the job stops. Closing it interrupts collection; saved results remain available.</p>
+      <p id="status" role="status">Opening saved collection job...</p>
+      <button id="pause" disabled>Pause</button>
+      <button id="cancel" disabled>Cancel</button>
+    </main>
+    <script type="module" src="/src/extension/collection-runner.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,56 @@
+{
+  "name": "annotation-analytics-extension",
+  "version": "1.0.0",
+  "description": "Private, local-first annotation analytics for Chrome",
+  "scripts": {
+    "icons": "node scripts/generate-icons.mjs",
+    "dev": "vite build --watch --mode development",
+    "build:diagnostic": "tsc --noEmit && vite build --mode development",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@tanstack/react-virtual": "^3.13.12",
+    "dexie": "^4.2.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.3.0",
+    "zod": "^4.1.12",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.1",
+    "@tailwindcss/vite": "^4.1.16",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/chrome": "^0.1.24",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "eslint": "^10.14.0",
+    "fake-indexeddb": "^6.2.4",
+    "jsdom": "^27.1.0",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^7.2.0",
+    "vitest": "^4.0.6",
+    "yazl": "^3.3.1"
+  },
+  "overrides": {
+    "minimatch": "^11.0.3"
+  }
+}
