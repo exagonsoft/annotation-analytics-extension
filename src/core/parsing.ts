@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AnnotationRecord, Json, Mapping, Mappings, Score, Source } from './model';
 import { redact, safeUrl } from './privacy';
 import { detailCollection, detailPayload, isDetailPayload, LINKEDIN_ORIGIN, parseAnnotationDetail, type DetailCollection } from './review';
+import { batchJoinKey } from './batches';
 
 export const objectSchema = z.record(z.string(), z.unknown());
 export function object(value: unknown): Record<string, unknown> | null {
@@ -83,7 +84,8 @@ export function normalize(raw: unknown, source: Source, mappings: Mappings = {})
     title: text(pathValue(inputData, 'title')) ?? text(obj.title),
     taskUrl: safeUrl(text(obj.taskUrl) ?? '') || null,
     attemptUrl: safeUrl(text(pathValue(annotationData, 'ATTEMPT_URL')) ?? '') || null,
-    inputData, annotationData, latestTaskResult, pipeline: detail?.data ? detail.data.pipelineId === null ? null : { id: detail.data.pipelineId } : redact(obj.pipeline), iteration: detail?.data ? detail.data.iterationId === null ? null : { id: detail.data.iterationId } : redact(obj.iteration),
+    inputData, annotationData, latestTaskResult, pipeline: detail?.data ? redact(detailPayload(detail.data).pipeline) : redact(obj.pipeline), iteration: detail?.data ? detail.data.iterationId === null ? null : { id: detail.data.iterationId } : redact(obj.iteration),
+    batchKey: detail?.data?.pipelineName ? batchJoinKey(detail.data.pipelineName) : typeof pathValue(obj.pipeline, 'name') === 'string' ? batchJoinKey(String(pathValue(obj.pipeline, 'name'))) : null,
     scores: { aesthetics: score(payload, mappings.aesthetics), functionality: score(payload, mappings.functionality), overall: score(payload, mappings.overall) },
     source: { ...source, url: scope }, rawPayload: payload, warnings, detail,
   };

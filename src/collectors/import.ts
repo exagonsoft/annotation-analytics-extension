@@ -16,7 +16,17 @@ export async function importData(text: string, mappings: Mappings, sourceUrl = '
     if (obj && obj.rawPayload && object(obj.source)) {
       const url = safeUrl(String(object(obj.source)?.url ?? ''));
       const saved = obj.detail ? importedDetail(obj.detail, String(obj.id)) : null;
-      append(url, saved?.data ? { ...object(obj.rawPayload), ...detailPayload(saved.data) } : obj.rawPayload);
+      const raw = object(obj.rawPayload) ?? {};
+      const pipeline = object(obj.pipeline), iteration = object(obj.iteration);
+      const rawPipeline = object(raw.pipeline), rawIteration = object(raw.iteration);
+      const payload = { ...raw };
+      if (pipeline && typeof pipeline.name === 'string' && (rawPipeline?.id == null || String(pipeline.id) === String(rawPipeline.id))) {
+        payload.pipeline = { ...rawPipeline, id: pipeline.id, name: pipeline.name };
+      }
+      if (iteration && typeof iteration.name === 'string' && (raw.iterationId == null || String(iteration.id) === String(raw.iterationId))) {
+        payload.iteration = { ...rawIteration, id: iteration.id, name: iteration.name };
+      }
+      append(url, saved?.data ? { ...payload, ...detailPayload(saved.data) } : payload);
     } else {
       const url = safeUrl(sourceUrl);
       append(url, value);

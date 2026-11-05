@@ -57,7 +57,7 @@ export function FilterBar() {
       <div className="filter-grid">
         <label className="field">From (UTC)<input type="date" value={filters.from} onChange={e => change('from', e.target.value)} /></label>
         <label className="field">Through (UTC)<input type="date" value={filters.to} onChange={e => change('to', e.target.value)} /></label>
-        {fields.map(f => <Select key={f.key} label={f.label} value={filters[f.key]} onChange={v => change(f.key, v)} options={f.values} />)}
+        {fields.map(f => <Select key={f.key} label={f.label} value={filters[f.key] ?? ''} onChange={v => change(f.key, v)} options={f.values} />)}
         <label className="field">Task-answer score availability<select value={filters.scored} onChange={e => change('scored', e.target.value)}><option value="">All</option><option value="yes">Scored</option><option value="no">Unscored</option></select></label>
         <label className="field">Overall minimum<input type="number" value={filters.min} onChange={e => change('min', e.target.value)} /></label>
         <label className="field">Overall maximum<input type="number" value={filters.max} onChange={e => change('max', e.target.value)} /></label>

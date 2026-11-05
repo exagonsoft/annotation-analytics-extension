@@ -67,7 +67,29 @@ export async function fetchAnnotationDetailInPage(request: PageDetailRequest): P
     }
     for (const key of ['pipeline', 'pipelineStage']) {
       const item = value[key];
-      if (item && typeof item === 'object' && !Array.isArray(item)) payload[key] = { id: (item as Record<string, unknown>).id };
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const fields = item as Record<string, unknown>;
+        payload[key] = key === 'pipeline' ? { id: fields.id, name: fields.name, lastModifiedAt: fields.lastModifiedAt,
+          stages: Array.isArray(fields.stages) ? fields.stages.slice(0, 100).map(stage => {
+            const value = stage && typeof stage === 'object' ? stage as Record<string, unknown> : {};
+            return { iterationId: value.iterationId, type: value.type };
+          }) : undefined } : { id: fields.id, type: fields.type };
+      }
+    }
+    const project = value.project;
+    if (project && typeof project === 'object' && !Array.isArray(project)) {
+      const fields = project as Record<string, unknown>;
+      if (Array.isArray(fields.pipelines)) {
+        if (fields.pipelines.length > 10_000) return { kind: 'error', reason: 'size', status: response.status, started: true, message: 'Pipeline catalog exceeded 10,000 entries.' };
+        payload.project = { id: fields.id, pipelines: fields.pipelines.map(pipeline => {
+          const item = pipeline && typeof pipeline === 'object' ? pipeline as Record<string, unknown> : {};
+          return { id: item.id, name: item.name, lastModifiedAt: item.lastModifiedAt,
+            stages: Array.isArray(item.stages) ? item.stages.slice(0, 100).map(stage => {
+              const value = stage && typeof stage === 'object' ? stage as Record<string, unknown> : {};
+              return { iterationId: value.iterationId, type: value.type };
+            }) : undefined };
+        }) };
+      }
     }
     const review = value.currentVersionReview;
     if (review && typeof review === 'object' && !Array.isArray(review)) {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { FilterBar, Modal } from '../src/ui/components';
 import { useApp } from '../src/ui/store';
-import { emptyFilters } from '../src/core/model';
+import { defaultSettings, emptyFilters } from '../src/core/model';
 import { normalize } from '../src/core/parsing';
 import { newSource } from '../src/core/storage';
 import { fixture, mappings } from './fixtures';
@@ -12,6 +12,7 @@ import { LINKEDIN_ORIGIN } from '../src/core/review';
 import { ReviewCacheSummary } from '../src/ui/ReviewCacheSummary';
 import { ReviewAnalytics } from '../src/ui/ReviewAnalytics';
 import { emptyReviewFilters } from '../src/core/review-analytics';
+import { Annotations, annotationCell } from '../src/ui/Annotations';
 
 describe('dashboard controls', () => {
   it('uses the entire local data source as the primary read-only review dashboard and shares its filters', () => {
@@ -96,5 +97,33 @@ describe('dashboard controls', () => {
     expect(screen.getByText(/1 awaiting enrichment/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open Review Analytics' }));
     expect(open).toHaveBeenCalledTimes(1);
+  });
+  it('populates cached explorer fields without relabeling reviewer scores as task answers', () => {
+    const record = normalize(reviewFixture(1, { pipeline: { id: 7001, name: 'Known batch' }, pipelineStage: { id: 7101, type: 'ATTEMPT' },
+      currentVersionReview: { annotationScore: 0, status: 'APPROVED' } }), newSource('devtools', `${LINKEDIN_ORIGIN}/ai-trainer/api/frontendAnnotationTaskResults/1`))!;
+    expect(annotationCell(record, 'reviewScore')).toBe('0');
+    expect(annotationCell(record, 'reviewStatus')).toBe('APPROVED');
+    expect(annotationCell(record, 'taskId')).toBe('4010128');
+    expect(annotationCell(record, 'batch')).toBe('Known batch');
+    expect(annotationCell(record, 'workType')).toBe('ATTEMPT');
+    expect(annotationCell(record, 'submittedAt')).toBe(new Date(1793555768000).toISOString());
+    expect(annotationCell(record, 'overall')).toBe('Not mapped');
+    useApp.setState({ records: [record], settings: defaultSettings });
+    render(<Annotations records={[record]} />);
+    expect(screen.getByRole('columnheader', { name: 'Reviewer score' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Review status' })).toBeVisible();
+    expect(screen.queryByRole('columnheader', { name: 'Overall' })).not.toBeInTheDocument();
+    expect(screen.getByText(/no mapped Aesthetics/)).toBeVisible();
+    record.detail!.verified = false;
+    expect(annotationCell(record, 'reviewScore')).toBe('Not collected');
+  });
+  it('preserves explicitly selected answer columns and actual mapped answers', () => {
+    const record = normalize(fixture('mapped-answers'), newSource('import'), mappings)!;
+    useApp.setState({ records: [record], settings: { ...defaultSettings, columns: ['id', 'overall'], annotationColumnsMode: 'custom' } });
+    render(<Annotations records={[record]} />);
+    expect(screen.getByRole('columnheader', { name: 'Overall' })).toBeVisible();
+    expect(annotationCell(record, 'overall')).toBe('4');
+    expect(screen.queryByRole('columnheader', { name: 'Reviewer score' })).not.toBeInTheDocument();
+    useApp.setState({ settings: defaultSettings });
   });
 });

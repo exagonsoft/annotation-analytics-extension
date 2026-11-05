@@ -29,6 +29,9 @@ Popup / side panel / dashboard / DevTools panel <--- Dexie liveQuery
 | `src\collectors\AnnotationDetailCollector.ts` | Persisted ID-only reviewer enrichment queue, retries, pacing and Web Lock |
 | `collection.html` / `src\extension\collection-runner.ts` | User-started non-active tab that owns review ingestion independently of visible interfaces |
 | `src\collectors\review-jobs.ts` | Validated session job launch/start acknowledgment, Pause/Cancel messaging and interruption recovery |
+| `src\core\finance.ts` / `finance-storage.ts` | Validated USD deliverables, exact-cent accounting, corrections, financial persistence and mapping checks |
+| `src\collectors\greenlight.ts` | Authorized portal-tab discovery, allowlisted rendered data and bounded native week navigation |
+| `src\ui\Financials.tsx` | Cached paid/pending summaries, filtered ledger/exports and explicit batch reconciliation |
 | `src\collectors\detail-session.ts` | Self-contained isolated-world same-origin detail GET and cancellation bridge |
 | `src\collectors\website-session.ts` | User-started native task-link clicks/navigation, safe capture tickets and response correlation; no direct API fetch |
 | `src\ui` | Accessible native controls, Radix dialogs, Zustand projection, Recharts |
@@ -53,6 +56,14 @@ Website-driven review collection reuses that queue with enforced concurrency one
 
 ## Scale
 
+Greenlight financials uses separate schema-4 stores and per-tab native capture flags. DevTools routes recognized supplier-time responses to an allowlisted financial parser rather than annotation discovery. The website supplies its own authorization; the extension never extracts tokens or issues Greenlight API fetches. DOM reads capture displayed amounts and rates only. Financial DOM observations and API deliverables are not summed together. Explicit mappings reconcile aggregate batch counts with saved annotation scopes for labeled unbilled estimates; they do not establish individual paid task identities. See [Financials](FINANCIALS.md).
+
+Schema 5 recovers surviving local batch metadata without collection. Allowlisted pipeline names and stage work types survive detail transport, normalization and cache merges. Financials derives exact batch matches from both caches, preserving Set/date and reporting ambiguous scopes and uncertain counts; it does not assign individual paid IDs or infer financial rates.
+
+Schema 6 persists shared normalized join keys and a minimal project-scoped pipeline/stage catalog. Detail capture/import repairs other cached annotations using pipeline identity or a unique stage iteration, without task requests or review-cache invalidation. Explorer payment filters and exports use full-cache batch coverage; remaining submitted work subtracts paid counts, including work already present in pending deliverables.
+
+Observed earnings projections reuse full-cache reconciliation and eligible paid deliverables from the same batch/work type. Exact paid-cent/count ratios are multiplied before final cent rounding; mixed amounts are excluded rather than allocated. Actual pending USD is combined only with unaccounted-work estimates, never with an estimate already including pending tasks. Optional confirmed-rate projections remain separate. Summary, batch table and financial JSON reports expose evidence and unavailable estimates without new collection or storage migrations.
+
 The annotation table uses TanStack virtualization inside server-independent local pagination. IndexedDB indexes identity, project, state and date. The browser loads the current dataset into memory to compute combined filters and charts. This is intended for thousands to tens of thousands of moderate-size records, not an unlimited data warehouse.
 
 Response pages are bounded at 20 MB, imports at 50 MB, nested redaction depth at 25, individual text fields at 2 MB, and request loops at at most 1,000 pages. Snapshots duplicate payloads and consume disk. Quota errors surface rather than pretending data was saved. There is no `unlimitedStorage` permission.
@@ -65,4 +76,4 @@ User actions report errors in an accessible alert. API runs persist a partial/fa
 
 ## Schema strategy
 
-The Dexie database is version 3. Version 2 retains version 1 stores, adds task/detail indexes and `reviewRuns`, canonicalizes LinkedIn annotation IDs and recovers existing review data. Version 3 repairs false-complete list-derived caches and marks interrupted old runs. New snapshots still carry `schemaVersion: 2`; restoration supports versions 1 and 2 and validates review provenance. Future schema changes require a Dexie migration and explicit older-snapshot adapter. Unsupported versions are rejected. Imported task-answer scores are reparsed from redacted raw data; normalized review details are separately validated against the confirmed contract.
+The Dexie database is version 6. Version 2 retains version 1 stores, adds task/detail indexes and `reviewRuns`, canonicalizes LinkedIn annotation IDs and recovers existing review data. Version 3 repairs false-complete list-derived caches and marks interrupted old runs. Version 4 adds financial payments, captured periods, rendered observations and explicit batch mappings without replacing annotation data. Versions 5 and 6 add local batch recovery and the minimal catalog/shared keys described above. New annotation snapshots still carry `schemaVersion: 2`; restoration supports versions 1 and 2 and validates review provenance. Financials is a separate dataset and is not included in annotation snapshots. Future schema changes require a Dexie migration and explicit older-snapshot adapter. Unsupported versions are rejected. Imported task-answer scores are reparsed from redacted raw data; normalized review details are separately validated against the confirmed contract.

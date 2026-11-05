@@ -1,5 +1,8 @@
 import type { AnnotationRecord, Dimension, Filters } from './model';
 import { pathValue } from './parsing';
+import { annotationPaymentCoverage, type Payment } from './finance';
+import { annotationBatchMetadata } from './review';
+import { batchJoinKey } from './batches';
 
 export function groupName(value: unknown): string {
   if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -8,13 +11,18 @@ export function groupName(value: unknown): string {
 export function hasScore(record: AnnotationRecord): boolean {
   return Object.values(record.scores).some(s => s.scoringStatus === 'verified');
 }
-export function filterRecords(records: AnnotationRecord[], filters: Filters): AnnotationRecord[] {
+export function filterRecords(records: AnnotationRecord[], filters: Filters, payments: Payment[] = []): AnnotationRecord[] {
   const query = filters.search.trim().toLocaleLowerCase();
+  const coverage = filters.paymentState ? annotationPaymentCoverage(records, payments) : null;
   return records.filter(r => {
     if (query && !`${r.id} ${r.title ?? ''}`.toLocaleLowerCase().includes(query)) return false;
     if (filters.from && (!r.createdAt || r.createdAt < `${filters.from}T00:00:00.000Z`)) return false;
     if (filters.to && (!r.createdAt || r.createdAt > `${filters.to}T23:59:59.999Z`)) return false;
     if (filters.project && r.projectId !== filters.project) return false;
+    if (filters.batchKey && (r.batchKey ?? batchJoinKey(annotationBatchMetadata(r).pipelineName ?? '')) !== filters.batchKey) return false;
+    const payment = coverage?.get(r.key);
+    if (filters.paymentState === 'remaining' && (payment?.remaining == null || payment.remaining <= 0)) return false;
+    if (filters.paymentState && filters.paymentState !== 'remaining' && payment?.state !== filters.paymentState) return false;
     if (filters.iteration && r.iterationId !== filters.iteration) return false;
     if (filters.template && r.templateId !== filters.template) return false;
     if (filters.pipeline && groupName(r.pipeline) !== filters.pipeline) return false;

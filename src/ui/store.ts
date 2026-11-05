@@ -5,12 +5,21 @@ import { defaultSettings, emptyFilters } from '../core/model';
 import { db, getSettings } from '../core/storage';
 import type { ReviewRun } from '../core/review';
 import { emptyReviewFilters, type ReviewFilters } from '../core/review-analytics';
+import type { FinancialDom, FinancialMapping, FinancialPeriod, Payment } from '../core/finance';
+
+export const emptyFinancialFilters = { search: '', from: '', to: '', status: '', tag: '', organization: '' };
+export type FinancialFilters = typeof emptyFinancialFilters;
 
 interface AppState {
   records: AnnotationRecord[];
   sources: Source[];
   snapshots: Snapshot[];
   reviewRuns: ReviewRun[];
+  payments: Payment[];
+  financialPeriods: FinancialPeriod[];
+  financialDom: FinancialDom[];
+  financialMappings: FinancialMapping[];
+  financialFilters: FinancialFilters;
   settings: Settings;
   filters: Filters;
   reviewFilters: ReviewFilters;
@@ -18,13 +27,16 @@ interface AppState {
   error: string;
   setFilters: (patch: Partial<Filters>) => void;
   setReviewFilters: (patch: Partial<ReviewFilters>) => void;
+  setFinancialFilters: (patch: Partial<FinancialFilters>) => void;
   setSettings: (settings: Settings) => void;
   report: (error: unknown) => void;
 }
 export const useApp = create<AppState>(set => ({
   records: [], sources: [], snapshots: [], reviewRuns: [], settings: defaultSettings, filters: emptyFilters, reviewFilters: emptyReviewFilters, ready: false, error: '',
+  payments: [], financialPeriods: [], financialDom: [], financialMappings: [], financialFilters: emptyFinancialFilters,
   setFilters: patch => set(state => ({ filters: { ...state.filters, ...patch } })),
   setReviewFilters: patch => set(state => ({ reviewFilters: { ...state.reviewFilters, ...patch } })),
+  setFinancialFilters: patch => set(state => ({ financialFilters: { ...state.financialFilters, ...patch } })),
   setSettings: settings => set({ settings }),
   report: error => set({ error: error instanceof Error ? error.message : String(error) }),
 }));
@@ -34,6 +46,10 @@ export function initialize(): () => void {
     sources: await db.sources.orderBy('collectedAt').reverse().toArray(),
     snapshots: await db.snapshots.orderBy('createdAt').reverse().toArray(),
     reviewRuns: (await db.reviewRuns.toCollection().sortBy('updatedAt')).reverse().slice(0, 20),
+    payments: await db.payments.toArray(),
+    financialPeriods: await db.financialPeriods.orderBy('capturedAt').reverse().toArray(),
+    financialDom: await db.financialDom.orderBy('capturedAt').reverse().toArray(),
+    financialMappings: await db.financialMappings.toArray(),
   })).subscribe({
     next: data => useApp.setState({ ...data, ready: true }),
     error: error => useApp.getState().report(error),

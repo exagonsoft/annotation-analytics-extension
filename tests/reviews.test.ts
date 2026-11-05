@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Dexie from 'dexie';
-import { AnalyticsDB, clearCurrent, db, ingest, newSource, remap, restoreSnapshot, saveSnapshot } from '../src/core/storage';
+import { AnalyticsDB, clearCurrent, db, ingest, newSource, rebuildBatchJoins, remap, restoreSnapshot, saveSnapshot } from '../src/core/storage';
 import { detailCollection, hasCachedDetail, LINKEDIN_ORIGIN, mergeReviewRecord, parseAnnotationDetail, reviewDiagnosticsReport } from '../src/core/review';
 import { normalize } from '../src/core/parsing';
 import { emptyReviewFilters, filterReviews, reviewCsv, reviewScore, reviewState, summarizeReviews } from '../src/core/review-analytics';
@@ -11,6 +11,10 @@ import { importData } from '../src/collectors/import';
 import { fixture } from './fixtures';
 import { reviewFixture } from './review-fixtures';
 import { interruptReviewJobs } from '../src/collectors/review-jobs';
+import { filterRecords } from '../src/core/analytics';
+import { emptyFilters } from '../src/core/model';
+import { annotationPaymentCoverage, normalizeFinancialTime } from '../src/core/finance';
+import { financeFixture } from './finance-fixtures';
 
 const sourceUrl = `${LINKEDIN_ORIGIN}/ai-trainer/api/list`;
 const config = { concurrency: 1, delayMs: 500, maxRetries: 1 };
@@ -74,6 +78,91 @@ describe('confirmed review contract', () => {
     expect(JSON.stringify(record)).not.toContain('Do not retain project configuration');
     expect(JSON.stringify(record)).not.toContain('fixture@example.test');
     expect(parseAnnotationDetail(reviewFixture(1, { currentVersionReview: { feedback: 'Authorization: test-only-placeholder', annotationScore: 4 } })).review.feedback).toBe('[REDACTED]');
+  });
+  it('preserves allowlisted batch metadata through enrichment, listing updates, remapping, exports and snapshots without re-fetching', async () => {
+    const name = 'Webapp Preference - 320 - Set AF - 2026-10-31';
+    await seed();
+    await ingest([reviewFixture(7901345, { pipeline: { id: 7001, name, configuration: 'not-retained' },
+      pipelineStage: { id: 7101, type: 'ATTEMPT', configuration: 'not-retained' } })], newSource('devtools', `${LINKEDIN_ORIGIN}/ai-trainer/api/frontendAnnotationTaskResults/7901345`), {});
+    await ingest([fixture('7901345', { projectId: 989007, iterationId: 3188053 })], newSource('import', sourceUrl), {});
+    await remap({});
+    const saved = (await db.records.toArray())[0]!;
+    expect(saved.detail?.data).toMatchObject({ pipelineId: 7001, pipelineName: name, pipelineStageType: 'ATTEMPT' });
+    expect(saved.pipeline).toMatchObject({ id: 7001, name });
+    expect(JSON.stringify(saved)).not.toContain('not-retained');
+    const transport = vi.fn<DetailTransport>();
+    await new AnnotationDetailCollector({ transport, exclusive }).start({ config });
+    expect(transport).not.toHaveBeenCalled();
+    await saveSnapshot('Batch metadata', {});
+    const snapshot = (await db.snapshots.toArray())[0]!;
+    const exported = exportRecords([saved], 'json');
+    await clearCurrent();
+    await importData(exported, {});
+    expect((await db.records.toArray())[0]!.detail?.data?.pipelineName).toBe(name);
+    await restoreSnapshot(snapshot, true, {});
+    expect((await db.records.toArray())[0]!.detail?.data?.pipelineStageType).toBe('ATTEMPT');
+    const changed = mergeReviewRecord(saved, detailCollection(parseAnnotationDetail(reviewFixture(7901345, { pipeline: { id: 9999 }, iterationId: 9998 })), 'import'));
+    expect(changed.detail?.data?.pipelineName).toBeNull();
+    expect(changed.detail?.data?.pipelineStageType).toBeNull();
+    const sparse = mergeReviewRecord(saved, detailCollection(parseAnnotationDetail(reviewFixture(7901345, { pipeline: null })), 'import'));
+    expect(sparse.pipeline).toMatchObject({ id: '7001', name });
+  });
+  it('repairs existing verified records from an imported project pipeline/stage catalog and persists the joined keys without any task GET', async () => {
+    const f = 'Webapp Preference - 320 - Set F - 2026-10-31', g = 'Webapp Preference - Set G - 2026-10-31';
+    await ingest([reviewFixture(1, { projectId: 77, iterationId: 101, pipeline: { id: 901 } }),
+      reviewFixture(2, { projectId: 77, iterationId: 102, pipeline: null })], newSource('import', sourceUrl), {});
+    const fetchedAt = (await db.records.where('id').equals('1').first())!.detail!.fetchedAt;
+    await ingest([reviewFixture(3, { projectId: 77, iterationId: 101, pipeline: { id: 901, name: f },
+      project: { id: 77, projectConfig: 'DO_NOT_RETAIN', pipelines: [
+        { id: 901, name: f, stages: [{ iterationId: 101, type: 'ATTEMPT', configuration: 'DO_NOT_RETAIN' }] },
+        { id: 902, name: g, stages: [{ iterationId: 102, type: 'ATTEMPT' }] },
+      ] } })], newSource('devtools', `${LINKEDIN_ORIGIN}/ai-trainer/api/frontendAnnotationTaskResults/3`), {});
+    const first = (await db.records.where('id').equals('1').first())!, second = (await db.records.where('id').equals('2').first())!;
+    expect(first).toMatchObject({ batchKey: 'webapp preference - set f - 2026-10-31',
+      detail: { verified: true, fetchedAt, data: { pipelineName: f, pipelineStageType: 'ATTEMPT' } } });
+    expect(second).toMatchObject({ batchKey: 'webapp preference - set g - 2026-10-31',
+      pipeline: { id: '902', name: g }, detail: { verified: true, data: { pipelineStageType: 'ATTEMPT' } } });
+    expect(await db.annotationBatches.count()).toBe(2);
+    expect(JSON.stringify(await db.annotationBatches.toArray())).not.toContain('DO_NOT_RETAIN');
+    expect(JSON.stringify((await db.records.where('id').equals('3').first())!)).not.toContain('projectConfig');
+    expect(await rebuildBatchJoins()).toBe(0);
+    const transport = vi.fn<DetailTransport>();
+    await new AnnotationDetailCollector({ transport, exclusive }).start({ config });
+    expect(transport).not.toHaveBeenCalled();
+    const payload = financeFixture();
+    payload.deliverables = [payload.deliverables[0]!];
+    payload.deliverables[0]!.notes = 'TAG|Webapp Preference - Set F - 2026-10-31- Att: 2, Rev: 0;';
+    const payments = normalizeFinancialTime(payload).payments;
+    const records = await db.records.toArray();
+    expect(filterRecords(records, { ...emptyFilters, paymentState: 'paid' }, payments).map(record => record.id).sort()).toEqual(['1', '3']);
+    expect(filterRecords(records, { ...emptyFilters, paymentState: 'pending' }, payments).map(record => record.id)).toEqual(['2']);
+    expect(filterRecords(records, { ...emptyFilters, batchKey: first.batchKey! }, payments)).toHaveLength(2);
+    const reopened = new AnalyticsDB();
+    try { expect(await reopened.annotationBatches.count()).toBe(2); } finally { reopened.close(); }
+  });
+  it('exports full-batch payment counts for a subset and round-trips listing-only recovered labels without fabricating a review', async () => {
+    const name = 'Webapp Preference - 320 - Set AF - 2026-10-31';
+    await ingest([fixture('3', { projectId: 77, iterationId: 101, pipeline: { id: 901 }, iteration: null }),
+      reviewFixture(1, { projectId: 77, iterationId: 101, pipeline: { id: 901, name }, project: { id: 77, pipelines: [
+        { id: 901, name, stages: [{ iterationId: 101, type: 'ATTEMPT' }] },
+      ] } }),
+      reviewFixture(2, { projectId: 77, iterationId: 101, pipeline: { id: 901, name } }),
+    ], newSource('import', sourceUrl), {});
+    const records = await db.records.toArray(), listing = records.find(record => record.id === '3')!;
+    expect(hasCachedDetail(listing)).toBe(false);
+    const payload = financeFixture();
+    payload.deliverables = [payload.deliverables[0]!];
+    payload.deliverables[0]!.notes = 'TAG|Webapp Preference - Set AF - 2026-10-31- Att: 1, Rev: 0;';
+    const coverage = annotationPaymentCoverage(records, normalizeFinancialTime(payload).payments);
+    expect(JSON.parse(exportRecords([listing], 'json', coverage))[0].batchPaymentCoverage).toMatchObject({ state: 'partial', paid: 1, remaining: 2 });
+    expect(exportRecords([listing], 'csv', coverage)).toContain('"Partially paid batch","1","2"');
+    const exported = exportRecords([listing], 'json', coverage);
+    await clearCurrent();
+    await importData(exported, {});
+    const restored = (await db.records.toArray())[0]!;
+    expect(restored).toMatchObject({ batchKey: listing.batchKey, pipeline: listing.pipeline, iteration: listing.iteration });
+    expect(hasCachedDetail(restored)).toBe(false);
+    expect(restored.scores.overall.value).toBeNull();
   });
 });
 describe('review analytics, filters and exports', () => {

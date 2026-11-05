@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fixture } from '../fixtures';
 import { reviewFixture } from '../review-fixtures';
 import { abortAnnotationDetailInPage, fetchAnnotationDetailInPage } from '../../src/collectors/detail-session';
+import { financeFixture, financeUrl, greenlightMarkup } from '../finance-fixtures';
 
 let server: Server;
 let origin: string;
@@ -27,7 +28,11 @@ test.beforeAll(async () => {
       const id = Number(url.pathname.split('/').at(-1));
       detailRequests.push(id);
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify(reviewFixture(id)));
+      response.end(JSON.stringify(reviewFixture(id, { pipeline: { id: 7001, name: 'Session fixture batch', configuration: 'not-retained' },
+        pipelineStage: { id: 7101, type: 'ATTEMPT', configuration: 'not-retained' },
+        project: { id: 989007, projectConfig: 'not-retained', pipelines: [
+          { id: 7001, name: 'Session fixture batch', stages: [{ iterationId: 3188053, type: 'ATTEMPT', reviewConfig: 'not-retained' }] },
+        ] } })));
     } else if (url.pathname === '/api/tasks') {
       if (!request.headers.cookie?.includes('fixture_session=authorized')) {
         response.writeHead(401, { 'Content-Type': 'application/json' }); response.end('{"error":"Fixture login required"}'); return;
@@ -91,7 +96,7 @@ test('Chrome accepts MV3 and all extension surfaces render without runtime error
   await cp(resolve('dist'), fixtureExtension, { recursive: true });
   const manifestPath = join(fixtureExtension, 'manifest.json');
   const fixtureManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  fixtureManifest.host_permissions = [`${origin}/*`, 'https://www.linkedin.com/*'];
+  fixtureManifest.host_permissions = [`${origin}/*`, 'https://www.linkedin.com/*', 'https://portal.greenlight.ai/*'];
   await writeFile(manifestPath, JSON.stringify(fixtureManifest));
   await writeFile(join(fixtureExtension, 'review-test-bridge.js'), `export ${fetchAnnotationDetailInPage.toString()}\nexport ${abortAnnotationDetailInPage.toString()}`);
   context = await chromium.launchPersistentContext(profile, {
@@ -237,9 +242,14 @@ test('same-origin isolated-world detail fetch, review UI, CSV, origin refusal an
   expect(result.kind).toBe('response');
   if (result.kind !== 'response') throw new Error('Fixture session fetch did not return a response.');
   expect(result.status).toBe(200);
-  expect(result.payload).toMatchObject({ currentVersionReview: { annotationScore: 4 } });
+  expect(result.payload).toMatchObject({ currentVersionReview: { annotationScore: 4 }, pipeline: { id: 7001, name: 'Session fixture batch' }, pipelineStage: { id: 7101, type: 'ATTEMPT' } });
   expect(result.payload).not.toHaveProperty('annotatorProfile');
   expect(result.payload).not.toHaveProperty('pipeline.configuration');
+  expect(result.payload).not.toHaveProperty('pipelineStage.configuration');
+  expect(result.payload).toMatchObject({ project: { id: 989007, pipelines: [{ id: 7001, name: 'Session fixture batch',
+    stages: [{ iterationId: 3188053, type: 'ATTEMPT' }] }] } });
+  expect(result.payload).not.toHaveProperty('project.projectConfig');
+  expect(result.payload).not.toHaveProperty('project.pipelines.0.stages.0.reviewConfig');
   expect(detailRequests).toEqual([7901345]);
   expect(cancelled).toEqual({ kind: 'error', reason: 'aborted' });
   expect(detailRequests).toEqual([7901345]);
@@ -400,7 +410,9 @@ test('website collection clicks, captures, resumes, stops on native 403 and reus
       const id = Number(url.pathname.split('/').at(-1));
       requested.push(id);
       await route.fulfill({ status: id === 7000203 ? 403 : 200, contentType: 'application/json',
-        body: JSON.stringify(id === 7000203 ? { error: 'Synthetic access refusal' } : reviewFixture(id)) });
+        body: JSON.stringify(id === 7000203 ? { error: 'Synthetic access refusal' } : reviewFixture(id, {
+          pipeline: { id: 7001, name: 'Website fixture batch' }, pipelineStage: { id: 7101, type: 'ATTEMPT' },
+        })) });
       return;
     }
     await route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Synthetic native UI - not LinkedIn</title>
@@ -533,6 +545,18 @@ test('main dashboard, popup and side panel load cached review analytics after br
   expect(csv).toContain('7000203');
   expect(csv).not.toContain('7000201');
   await dashboard.getByRole('button', { name: 'Clear review filters', exact: true }).click();
+  await dashboard.getByRole('button', { name: 'Annotations', exact: true }).click();
+  await expect(dashboard.getByRole('columnheader', { name: 'Reviewer score', exact: true })).toBeVisible();
+  await expect(dashboard.getByRole('columnheader', { name: 'Overall', exact: true })).toHaveCount(0);
+  const cachedRow = dashboard.getByRole('row').filter({ has: dashboard.getByRole('cell', { name: '7000201', exact: true }) });
+  await expect(cachedRow).toContainText('APPROVED');
+  await expect(cachedRow).toContainText('Website fixture batch');
+  await expect(cachedRow).toContainText('ATTEMPT');
+  await dashboard.getByRole('button', { name: 'Task-answer columns', exact: true }).click();
+  await expect(dashboard.getByRole('columnheader', { name: 'Overall', exact: true })).toBeVisible();
+  await expect(dashboard.getByRole('cell', { name: 'No task answer', exact: true }).first()).toBeVisible();
+  await dashboard.getByRole('button', { name: 'Cached detail columns', exact: true }).click();
+  await expect(dashboard.getByRole('columnheader', { name: 'Reviewer score', exact: true })).toBeVisible();
   await dashboard.getByRole('button', { name: 'Review Analytics', exact: true }).click();
   await expect(dashboard.getByRole('heading', { name: 'Review Analytics', exact: true })).toBeVisible();
   const popup = await context.newPage();
@@ -612,4 +636,185 @@ test('closing a background runner interrupts safely and reopened controls resume
   expect(requested).toEqual([7000201, 7000202, 7000203]);
   await page.close(); await target.close();
   await context.unroute('https://www.linkedin.com/**');
+});
+
+test('Greenlight financials capture native JSON, collect rendered rates, reconcile corrections, navigate a bounded week and persist offline (synthetic fixture, NOT real account)', async () => {
+  await context.close();
+  context = await chromium.launchPersistentContext(profile, {
+    channel: 'chromium', headless: true,
+    args: [`--disable-extensions-except=${fixtureExtension}`, `--load-extension=${fixtureExtension}`, '--auto-open-devtools-for-tabs'],
+  });
+  worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
+  const paths: string[] = [];
+  await context.route('https://app.greenlight.ai/**', async route => {
+    const url = new URL(route.request().url());
+    paths.push(url.pathname);
+    expect(route.request().method()).toBe('GET');
+    expect((await route.request().allHeaders())['x-fixture-native']).toBe('website');
+    expect((await route.request().allHeaders()).authorization).toBeUndefined();
+    const start = url.searchParams.get('start')!;
+    const end = url.searchParams.get('end')!;
+    const week = start.slice(8, 10);
+    const payload = week === '12' ? financeFixture() : financeFixture({
+      start, end,
+      deliverables: [{ id: 'delivery-previous', amount: 21.67, date: '2026-10-11T00:00:00', status: 4, engagementId: 'engagement-fixture',
+        engagementTag: { name: 'PROJECT-FIXTURE' }, notes: 'PROJECT-FIXTURE|Previous batch- Att: 1, Rev: 0;' }],
+    });
+    await route.fulfill({ status: week === '28' ? 403 : 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify(week === '28' ? { error: 'Synthetic native access refusal' } : payload) });
+  });
+  await context.route('https://portal.greenlight.ai/**', async route => {
+    await route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Synthetic Greenlight fixture</title><main id="content"></main>
+      <script>
+        const markup = ${JSON.stringify(greenlightMarkup())};
+        let previous = 0;
+        function draw() {
+          const day = previous === 0 ? '12' : previous === 1 ? '05' : '28';
+          const last = previous === 0 ? '18' : previous === 1 ? '11' : '04';
+          const month = previous === 2 ? '09' : '10';
+          const period = previous === 0 ? 'Week of Oct 12th, 2026 - Oct 18th, 2026' :
+            previous === 1 ? 'Week of Oct 5th, 2026 - Oct 11th, 2026' : 'Week of Sep 28th, 2026 - Oct 4th, 2026';
+          document.getElementById('content').innerHTML = markup.replace('Week of Oct 12th, 2026 - Oct 18th, 2026', period);
+          if (previous > 0) {
+            document.querySelectorAll('.container_rowGroup__fixture')[1].remove();
+            document.querySelector('.quick_header__fixture').textContent = 'Deliverables (1)';
+            const row = document.querySelector('.container_data__fixture');
+            row.children[2].children[0].textContent = previous === 1 ? '10/11/2026' : '10/04/2026';
+            row.children[3].textContent = '$21.67';
+          }
+          document.getElementById('previous').onclick = () => { previous++; draw(); };
+          const endMonth = previous === 2 ? '10' : month;
+          const url = 'https://app.greenlight.ai/ui/suppliers/S-fixture/time?start=' +
+            encodeURIComponent('2026-' + month + '-' + day + 'T00:00:00') + '&end=' +
+            encodeURIComponent('2026-' + endMonth + '-' + last + 'T23:59:59');
+          fetch(url, { headers: { 'X-Fixture-Native': 'website' } }).then(r => r.json());
+        }
+        draw();
+      </script>` });
+  });
+  const target = await context.newPage();
+  await target.goto('https://portal.greenlight.ai/dashboard');
+  const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'https://portal.greenlight.ai/dashboard' }))[0]?.id);
+  expect(tabId).toBeDefined();
+  await expect.poll(() => worker.evaluate(async id => (await chrome.storage.session.get(`devtools:${id}`))[`devtools:${id}`], tabId), { timeout: 20_000 }).toBe(true);
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/dashboard.html?view=financials`);
+  await page.getByRole('button', { name: 'Find Greenlight tab', exact: true }).click();
+  await page.getByRole('button', { name: 'Collect rendered week & rates', exact: true }).click();
+  await expect(page.getByText('Saved 2 rendered deliverables and 1 rates', { exact: false })).toBeVisible();
+  const summary = page.getByRole('region', { name: 'Cached financial summary' });
+  await expect(summary.locator('.metric').filter({ hasText: 'Paid earnings' }).locator('strong')).toHaveText('$325.00');
+  await expect(summary.locator('.metric').filter({ hasText: 'Paid annotation tasks' }).locator('strong')).toHaveText('Not available');
+  await page.getByRole('button', { name: 'Start financial capture', exact: true }).click();
+  await target.reload();
+  await expect(page.getByRole('table', { name: 'Financial payment ledger' }).locator('tbody tr')).toHaveCount(3);
+  await expect(summary.locator('.metric').filter({ hasText: 'Paid earnings' }).locator('strong')).toHaveText('$325.00');
+  await expect(summary.locator('.metric').filter({ hasText: 'Paid annotation tasks' }).locator('strong')).toHaveText('15');
+  await expect(summary.locator('.metric').filter({ hasText: 'Pending payments' }).locator('strong')).toHaveText('$43.34');
+  const beforeUnaccounted = Number(await summary.locator('.metric').filter({ hasText: 'Completed attempts not in ledger (estimate)' }).locator('strong').textContent());
+  await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  await page.getByLabel('Original response URL (optional)').fill('https://www.linkedin.com/ai-trainer/api/list');
+  await page.locator('input[type=file]').setInputFiles({ name: 'finance-annotation-list.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
+    records: [
+      ...Array.from({ length: 14 }, (_, index) => fixture(String(9000000 + index), { iterationId: 'iteration-fixture',
+        pipeline: { id: 'finance-batch-fixture' }, iteration: { id: 'iteration-fixture' },
+        ...(index === 0 ? { project: { id: 'project-1', projectConfig: 'not-retained', pipelines: [
+          { id: 'finance-batch-fixture', name: 'Batch A', stages: [{ iterationId: 'iteration-fixture', type: 'ATTEMPT' }, { iterationId: 'review-fixture', type: 'REVIEW' }] },
+          { id: 'unbilled-pipeline', name: 'Unbilled fixture batch', stages: [{ iterationId: 'unbilled-fixture', type: 'ATTEMPT' }] },
+        ] } } : {}) })),
+      fixture('9000014', { iterationId: 'review-fixture', pipeline: { id: 'finance-batch-fixture' },
+        iteration: { id: 'review-fixture' } }),
+      ...[9000015, 9000016].map(id => fixture(String(id), { iterationId: 'unbilled-fixture',
+        pipeline: { id: 'unbilled-pipeline' }, iteration: { id: 'unbilled-fixture' } })),
+    ],
+  })) });
+  await expect(page.getByText('Imported 17 new unique annotations.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Financials', exact: true }).click();
+  const match = page.getByRole('table', { name: 'Automatic financial batch matches' }).locator('tbody tr')
+    .filter({ has: page.getByRole('cell', { name: 'PROJECT-FIXTURE · Batch A', exact: true }) });
+  await expect(match).toContainText('Matched · project project-1 · pipeline finance-batch-fixture');
+  await expect(match.locator('td').nth(2)).toHaveText('14 / 1');
+  await expect(match.locator('td').nth(3)).toHaveText('9 / 0');
+  await expect(match.locator('td').nth(4)).toHaveText('2 / 1');
+  await expect(match.locator('td').nth(5)).toHaveText('3');
+  const unbilled = page.getByRole('table', { name: 'Automatic financial batch matches' }).locator('tbody tr').filter({ hasText: 'Unbilled fixture batch' });
+  await expect(unbilled).toContainText('No payment in cache');
+  await expect(unbilled.locator('td').nth(5)).toHaveText('2');
+  await expect(summary.locator('.metric').filter({ hasText: 'Completed attempts not in ledger (estimate)' }).locator('strong')).toHaveText(String(beforeUnaccounted + 5));
+  await expect(summary.locator('.metric').filter({ hasText: 'Total pending attempts (estimate)' }).locator('strong')).toHaveText(String(beforeUnaccounted + 7));
+  await expect(summary.locator('.metric').filter({ hasText: 'Remaining earnings estimate (observed batch rates)' }).locator('strong')).toHaveText('$108.33');
+  await expect(summary.locator('.metric').filter({ hasText: 'Pending + unbilled estimate (observed rates)' }).locator('strong')).toHaveText('$108.34');
+  await expect(match.locator('td').nth(8)).toContainText('$65.00 / 3 paid');
+  await expect(match.locator('td').nth(8)).toContainText('remaining ~$108.33');
+  await page.getByLabel('Greenlight batch', { exact: true }).selectOption({ label: 'PROJECT-FIXTURE · Batch A' });
+  await page.getByLabel('Annotation scope', { exact: true }).selectOption('iteration-fixture');
+  await page.getByLabel('USD rate per submitted annotation', { exact: true }).fill('21.67');
+  await page.getByRole('checkbox', { name: 'I confirm this complete annotation scope', exact: false }).check();
+  await page.getByRole('button', { name: 'Save confirmed batch mapping', exact: true }).click();
+  await expect(summary.locator('.metric').filter({ hasText: 'Unbilled earnings estimate' }).locator('strong')).toHaveText('$65.01');
+  await expect(summary.locator('.metric').filter({ hasText: 'To be earned / received estimate' }).locator('strong')).toHaveText('$108.35');
+  await page.getByRole('button', { name: 'Annotations', exact: true }).click();
+  await page.getByLabel('Annotation batch join', { exact: true }).selectOption('batch a');
+  await page.getByLabel('Annotation batch payment coverage', { exact: true }).selectOption('remaining');
+  await page.getByLabel('Search annotations', { exact: true }).fill('9000000');
+  const annotationRow = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '9000000', exact: true }) });
+  await expect(annotationRow).toContainText('Partially paid batch');
+  const annotationExporting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Download CSV', exact: true }).click();
+  const annotationCsv = await readFile((await (await annotationExporting).path())!, 'utf8');
+  expect(annotationCsv).toContain('batch_join_key');
+  expect(annotationCsv).toContain('batch_remaining_to_pay');
+  expect(annotationCsv).toContain('"Partially paid batch","9","5"');
+  expect(annotationCsv).not.toContain('"9000001"');
+  await page.getByRole('button', { name: 'Clear all', exact: true }).click();
+  await page.getByRole('button', { name: 'Financials', exact: true }).click();
+  await page.getByLabel('Payment state', { exact: true }).selectOption('pending');
+  await expect(page.getByRole('table', { name: 'Financial payment ledger' }).locator('tbody tr')).toHaveCount(1);
+  const exporting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export financials', exact: true }).click();
+  await page.getByRole('button', { name: 'Download CSV', exact: true }).click();
+  const csv = await readFile((await (await exporting).path())!, 'utf8');
+  expect(csv).toContain('"43.34","Pending"');
+  expect(csv).not.toContain('delivery-correction');
+  await page.getByRole('button', { name: 'Export financials', exact: true }).click();
+  await page.getByRole('dialog').getByLabel('Format').selectOption('json');
+  const reporting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
+  const report = JSON.parse(await readFile((await (await reporting).path())!, 'utf8'));
+  expect(report.payments).toHaveLength(1);
+  expect(report.observedBatchEarnings.remainingCents).toBe(10833);
+  expect(report.reconciliation.rows.find((row: { batch: string }) => row.batch === 'Batch A').paidAttempts).toBe(9);
+  await page.getByRole('button', { name: 'Clear financial filters', exact: true }).click();
+  await page.getByRole('button', { name: 'Find Greenlight tab', exact: true }).click();
+  await page.getByRole('button', { name: 'Capture previous week', exact: true }).click();
+  await expect(page.getByText('Previous week captured and rendered data saved.', { exact: false })).toBeVisible();
+  await expect(summary.locator('.metric').filter({ hasText: 'Paid earnings' }).locator('strong')).toHaveText('$346.67');
+  await page.getByRole('button', { name: 'Capture previous week', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'HTTP 403' }).first()).toBeVisible();
+  await expect(page.getByText('Latest HTTP status').locator('..').locator('dd')).toHaveText('403');
+  await expect(page.getByText('Capture state', { exact: true }).locator('..').locator('dd')).toHaveText('Stopped');
+  expect(paths.every(path => path === new URL(financeUrl).pathname)).toBe(true);
+  await context.close();
+  context = await chromium.launchPersistentContext(profile, {
+    channel: 'chromium', headless: true,
+    args: [`--disable-extensions-except=${fixtureExtension}`, `--load-extension=${fixtureExtension}`],
+  });
+  worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
+  const unexpected: string[] = [];
+  await context.route('https://**.greenlight.ai/**', async route => { unexpected.push(route.request().url()); await route.abort(); });
+  for (const file of ['dashboard.html', 'popup.html', 'sidepanel.html']) {
+    const offline = await context.newPage();
+    await offline.goto(`chrome-extension://${extensionId}/${file}`);
+    const cached = offline.getByRole('region', { name: 'Cached financial summary' });
+    await expect(cached.locator('.metric').filter({ hasText: 'Paid earnings' }).locator('strong')).toHaveText('$346.67');
+    await expect(cached.locator('.metric').filter({ hasText: 'Pending payments' }).locator('strong')).toHaveText('$43.34');
+    await expect(cached.locator('.metric').filter({ hasText: 'Unbilled earnings estimate' }).locator('strong')).toHaveText('$65.01');
+    await expect(cached.locator('.metric').filter({ hasText: 'Remaining earnings estimate (observed batch rates)' }).locator('strong')).toHaveText('$108.33');
+    await expect(cached.locator('.metric').filter({ hasText: 'Pending + unbilled estimate (observed rates)' }).locator('strong')).toHaveText('$108.34');
+    await expect(cached).toContainText('1 / 3 payment batches matched to cached annotation pipelines');
+    await offline.close();
+  }
+  expect(unexpected).toEqual([]);
+  await context.unroute('https://**.greenlight.ai/**');
 });

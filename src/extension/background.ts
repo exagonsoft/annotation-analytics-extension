@@ -30,6 +30,6 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   return true;
 });
 chrome.tabs.onRemoved.addListener(tabId => {
-  void chrome.storage.session.remove([`dom:${tabId}`, `capture:${tabId}`]);
+  void chrome.storage.session.remove([`dom:${tabId}`, `capture:${tabId}`, `finance-capture:${tabId}`]);
   void interruptReviewJobs(tabId).catch(() => console.error('Closed collection tab state could not be saved.'));
 });

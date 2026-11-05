@@ -6,6 +6,7 @@ import { clearCurrent, db, remap, saveSettings } from '../core/storage';
 import { action, useApp } from './store';
 import { Badge } from './components';
 import { Detail } from './Annotations';
+import { clearFinancialData } from '../core/finance-storage';
 
 function MappingEditor({ dimension, onSave }: { dimension: Dimension; onSave: (mapping?: Mapping) => Promise<void> }) {
   const settings = useApp(s => s.settings);
@@ -68,8 +69,8 @@ export function Settings() {
         if (permissions.origins?.length) await chrome.permissions.remove({ origins: permissions.origins });
         setNotice('Optional API host permissions revoked.');
       })}>Revoke API host permissions</button>
-      <button className="danger" onClick={() => { if (window.confirm('Delete ALL local annotations, sources, snapshots, presets and settings? Stop active collectors first. This cannot be undone.')) void action(async () => {
-        await clearCurrent(); await db.snapshots.clear(); await chrome.storage.local.clear(); await chrome.storage.session.clear();
+      <button className="danger" onClick={() => { if (window.confirm('Delete ALL local annotations, financial records/mappings, sources, snapshots, presets and settings? Stop active collectors first. This cannot be undone.')) void action(async () => {
+        await clearCurrent(); await clearFinancialData(); await db.snapshots.clear(); await chrome.storage.local.clear(); await chrome.storage.session.clear();
         await saveSettings(defaultSettings); setNotice('Local data and settings deleted. Optional host permissions can be revoked separately.');
       }); }}>Delete all local data</button>
     </div></section>

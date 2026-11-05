@@ -1,4 +1,4 @@
-import { db } from '../core/storage';
+import { db, saveBatchCatalog } from '../core/storage';
 import { annotationId, defaultReviewConfig, DETAIL_PATH, LINKEDIN_ORIGIN, mergeReviewRecord, parseAnnotationDetail, reviewCollectorConfigSchema, shouldSkipCachedDetail, type DetailCollection, type DetailDiagnosticEvent, type ReviewCollectionMethod, type ReviewCollectorConfig, type ReviewDiagnostics, type ReviewRun } from '../core/review';
 import { wait } from './api';
 import { detailExecutionError, type DetailTransport } from './detail-session';
@@ -193,6 +193,7 @@ export class AnnotationDetailCollector {
             diagnostics.failed++; this.event(item, 'DETAIL_REQUEST_FAILED', response.status, 'Invalid detail JSON or mismatched annotation ID.');
             await this.fail(item.key, response.status, 'Invalid detail JSON or mismatched annotation ID. No response data was merged.'); return;
           }
+          await saveBatchCatalog(response.payload);
           await this.entry(item.key, entry => ({ ...entry, status: 'complete', verified: true, data, fetchedAt: new Date().toISOString(), completedRunId: this.run!.id, attemptRunId: undefined }));
           this.run!.completed++;
           this.event(item, 'DETAIL_REQUEST_SUCCESS', response.status);

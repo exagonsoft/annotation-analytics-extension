@@ -61,6 +61,7 @@ export interface AnnotationRecord {
   annotationData: Json;
   latestTaskResult: Json;
   pipeline: Json;
+  batchKey?: string | null;
   iteration: Json;
   scores: Record<Dimension, Score>;
   source: Source;
@@ -85,10 +86,12 @@ export interface Filters {
   min: string;
   max: string;
   scale: string;
+  batchKey?: string;
+  paymentState?: string;
 }
 export const emptyFilters: Filters = {
   search: '', from: '', to: '', project: '', iteration: '', pipeline: '', template: '',
-  state: '', resultState: '', type: '', scored: '', source: '', category: '', min: '', max: '', scale: '',
+  state: '', resultState: '', type: '', scored: '', source: '', category: '', min: '', max: '', scale: '', batchKey: '', paymentState: '',
 };
 export interface Settings {
   mappings: Mappings;
@@ -97,6 +100,7 @@ export interface Settings {
   delayMs: number;
   presets: { name: string; filters: Filters }[];
   columns: string[];
+  annotationColumnsMode?: 'custom';
   reviewCollector: ReviewCollectorConfig;
 }
 export const defaultSettings: Settings = {

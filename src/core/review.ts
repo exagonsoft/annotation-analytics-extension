@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { redact } from './privacy';
 import type { AnnotationRecord } from './model';
+import { batchJoinKey, extractBatchCatalog, findBatchDescriptor, type BatchDescriptor } from './batches';
 
 export const LINKEDIN_ORIGIN = 'https://www.linkedin.com';
 export const DETAIL_PATH = '/ai-trainer/api/frontendAnnotationTaskResults/';
@@ -18,6 +19,8 @@ export interface AnnotationDetail {
   projectId: number | null;
   iterationId: number | null;
   pipelineId: number | null;
+  pipelineName?: string | null;
+  pipelineStageType?: string | null;
   pipelineStageId: number | null;
   createdAt: number | null;
   claimedAt: number | null;
@@ -86,11 +89,13 @@ const identifier = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const optionalId = identifier.nullish();
 const timestamp = z.number().finite().nonnegative().max(8.64e15).nullish();
 const duration = z.number().finite().nonnegative().nullish();
+const batchLabel = z.string().trim().min(1).max(2000).nullish();
 export const annotationDetailSchema = z.object({
   id: identifier, taskId: optionalId, state: z.string().trim().min(1).max(200),
   projectId: optionalId, iterationId: optionalId, pipelineId: optionalId, pipelineStageId: optionalId,
-  pipeline: z.object({ id: optionalId }).nullish(),
-  pipelineStage: z.object({ id: optionalId }).nullish(),
+  pipelineName: batchLabel, pipelineStageType: z.string().max(200).nullish(),
+  pipeline: z.object({ id: optionalId, name: batchLabel }).nullish(),
+  pipelineStage: z.object({ id: optionalId, type: z.string().max(200).nullish() }).nullish(),
   createdAt: timestamp, claimedAt: timestamp, endedAt: timestamp,
   durationInSeconds: duration, idleDurationInSeconds: duration,
   currentVersionReview: z.object({
@@ -112,10 +117,18 @@ export function parseAnnotationDetail(payload: unknown, expectedId?: string): An
   const numericScore = typeof review?.annotationScore === 'number' && Number.isFinite(review.annotationScore) ? review.annotationScore : null;
   const validScore = numericScore !== null;
   const feedback = review?.feedback === null || review?.feedback === undefined ? null : redact(review.feedback);
+  const pipelineName = value.pipelineName ?? value.pipeline?.name;
+  const pipelineId = value.pipelineId ?? value.pipeline?.id ?? null;
+  const catalog = extractBatchCatalog(payload);
+  const descriptor = findBatchDescriptor(catalog.batches, value.projectId == null ? null : String(value.projectId),
+    pipelineId === null ? null : String(pipelineId), value.iterationId == null ? null : String(value.iterationId));
+  const stageTypes = descriptor?.stages.filter(stage => stage.iterationId === String(value.iterationId)).map(stage => stage.type) ?? [];
   return {
     id: value.id, taskId: value.taskId ?? null, state: value.state,
     projectId: value.projectId ?? null, iterationId: value.iterationId ?? null,
-    pipelineId: value.pipelineId ?? value.pipeline?.id ?? null,
+    pipelineId,
+    pipelineName: pipelineName ? String(redact(pipelineName)) : descriptor?.name ?? null,
+    pipelineStageType: value.pipelineStageType ?? value.pipelineStage?.type ?? (new Set(stageTypes).size === 1 ? stageTypes[0] : null) ?? null,
     pipelineStageId: value.pipelineStageId ?? value.pipelineStage?.id ?? null,
     createdAt: value.createdAt ?? null, claimedAt: value.claimedAt ?? null, endedAt: value.endedAt ?? null,
     durationInSeconds: value.durationInSeconds ?? null, idleDurationInSeconds: value.idleDurationInSeconds ?? null,
@@ -125,7 +138,7 @@ export function parseAnnotationDetail(payload: unknown, expectedId?: string): An
       feedback: feedback === null ? null : typeof feedback === 'string' ? feedback : JSON.stringify(feedback),
       reviewed: review !== null && review !== undefined,
     },
-    warnings: review?.annotationScore !== null && review?.annotationScore !== undefined && !validScore ? ['Nonnumeric or nonfinite review score excluded.'] : [],
+    warnings: [...catalog.warnings, ...(review?.annotationScore !== null && review?.annotationScore !== undefined && !validScore ? ['Nonnumeric or nonfinite review score excluded.'] : [])],
   };
 }
 export function detailCollection(data: AnnotationDetail, via: DetailCollection['via']): DetailCollection {
@@ -163,28 +176,76 @@ export function reviewDiagnosticsReport(run: ReviewRun, preparationError = ''): 
     message: run.message, preparationError: preparationError || null, notBefore: run.notBefore, config: run.config, diagnostics: run.diagnostics ?? null,
   }), null, 2);
 }
+export function annotationBatchMetadata(record: AnnotationRecord) {
+  const obj = (value: unknown): Record<string, unknown> =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const raw = obj(record.rawPayload), data = record.detail?.data;
+  const pipelineId = data?.pipelineId ?? obj(record.pipeline).id ?? obj(raw.pipeline).id;
+  const compatible = [obj(record.pipeline), obj(raw.pipeline)].filter(value =>
+    pipelineId == null || value.id == null || String(value.id) === String(pipelineId));
+  const label = (value: unknown) => {
+    if (typeof value !== 'string' || !value.trim() || value.length > 2000) return null;
+    const safe = String(redact(value.trim()));
+    return safe.startsWith('[') ? null : safe;
+  };
+  const pipelineName = label(data?.pipelineName) ?? compatible.map(value => label(value.name)).find(Boolean) ?? null;
+  const stage = obj(raw.pipelineStage);
+  const rawPipelineCompatible = pipelineId == null || obj(raw.pipeline).id == null || String(obj(raw.pipeline).id) === String(pipelineId);
+  const stageCompatible = rawPipelineCompatible && (data?.pipelineStageId == null || stage.id == null || String(stage.id) === String(data.pipelineStageId));
+  const iteration = obj(record.iteration);
+  const iterationCompatible = data?.iterationId == null || iteration.id == null || String(iteration.id) === String(data.iterationId);
+  const stageType = data?.pipelineStageType ?? (stageCompatible ? stage.type ?? stage.name : null) ?? (iterationCompatible ? iteration.name : null);
+  const workType = typeof stageType === 'string' && /^(ATTEMPT|REVIEW)$/i.test(stageType.trim()) ? stageType.trim().toUpperCase() : null;
+  return { pipelineId: pipelineId == null ? null : String(pipelineId), pipelineName, workType };
+}
 export function mergeReviewRecord(record: AnnotationRecord, entry: DetailCollection): AnnotationRecord {
-  const data = entry.data;
+  let data = entry.data;
   if (!data) return { ...record, detail: entry };
+  const previous = annotationBatchMetadata(record);
+  const samePipeline = data.pipelineId === null || previous.pipelineId === null || String(data.pipelineId) === previous.pipelineId;
+  const sameStage = (data.pipelineStageId === null || record.detail?.data?.pipelineStageId == null || data.pipelineStageId === record.detail.data.pipelineStageId) &&
+    (data.iterationId === null || record.iterationId === null || String(data.iterationId) === record.iterationId);
+  data = { ...data, pipelineName: data.pipelineName ?? (samePipeline ? previous.pipelineName : null),
+    pipelineStageType: data.pipelineStageType ?? (samePipeline && sameStage ? previous.workType : null) };
+  const pipelineId = data.pipelineId ?? previous.pipelineId;
   return {
-    ...record, detail: entry, taskId: data.taskId === null ? record.taskId : String(data.taskId),
+    ...record, detail: { ...entry, data }, taskId: data.taskId === null ? record.taskId : String(data.taskId),
+    batchKey: data.pipelineName ? batchJoinKey(data.pipelineName) : null,
     state: data.state, projectId: data.projectId === null ? record.projectId : String(data.projectId),
     iterationId: data.iterationId === null ? record.iterationId : String(data.iterationId),
     createdAt: data.createdAt === null ? record.createdAt : new Date(data.createdAt).toISOString(),
     claimedAt: data.claimedAt === null ? record.claimedAt : new Date(data.claimedAt).toISOString(),
-    pipeline: data.pipelineId === null ? record.pipeline : { id: data.pipelineId },
+    pipeline: { ...(pipelineId === null ? {} : { id: pipelineId }), ...(data.pipelineName ? { name: data.pipelineName } : {}) },
   };
+}
+export function recoverRecordBatch(record: AnnotationRecord, catalog: BatchDescriptor[]): AnnotationRecord {
+  if (!record.source.url.startsWith(`${LINKEDIN_ORIGIN}/`)) return record;
+  const metadata = annotationBatchMetadata(record);
+  const descriptor = findBatchDescriptor(catalog, record.projectId, metadata.pipelineId, record.iterationId);
+  const name = metadata.pipelineName ?? descriptor?.name ?? null;
+  const stages = descriptor?.stages.filter(stage => stage.iterationId === record.iterationId).map(stage => stage.type) ?? [];
+  const type = metadata.workType ?? (!record.detail?.data?.pipelineStageType && new Set(stages).size === 1 &&
+    ['ATTEMPT', 'REVIEW'].includes(stages[0]!) ? stages[0] : null) ?? null;
+  const pipelineId = metadata.pipelineId ?? descriptor?.pipelineId ?? null;
+  const batchKey = name ? batchJoinKey(name) : null;
+  if (record.batchKey === batchKey && metadata.pipelineId === pipelineId && metadata.pipelineName === name && metadata.workType === type) return record;
+  const recovered = { ...record, batchKey, pipeline: { ...(pipelineId ? { id: pipelineId } : {}), ...(name ? { name } : {}) },
+    iteration: record.iteration && typeof record.iteration === 'object' && !Array.isArray(record.iteration) ?
+      { ...record.iteration, ...(type ? { name: type === 'ATTEMPT' ? 'Attempt' : type === 'REVIEW' ? 'Review' : type } : {}) } :
+      { ...(record.iterationId ? { id: record.iterationId } : {}), ...(type ? { name: type } : {}) } };
+  return recovered.detail?.data ? mergeReviewRecord(recovered, { ...recovered.detail,
+    data: { ...recovered.detail.data, pipelineName: name, pipelineStageType: recovered.detail.data.pipelineStageType ?? type } }) : recovered;
 }
 export function detailPayload(data: AnnotationDetail): Record<string, unknown> {
   const { review, ...metadata } = data;
   return {
-    ...metadata, pipeline: data.pipelineId === null ? null : { id: data.pipelineId },
-    pipelineStage: data.pipelineStageId === null ? null : { id: data.pipelineStageId },
+    ...metadata, pipeline: { id: data.pipelineId, name: data.pipelineName ?? null },
+    pipelineStage: { id: data.pipelineStageId, type: data.pipelineStageType ?? null },
     currentVersionReview: review.reviewed ? { annotationScore: review.annotationScore, status: review.status, feedback: review.feedback } : null,
   };
 }
 export function importedDetail(value: unknown, id: string): DetailCollection | null {
-  const result = z.object({ data: z.object({ review: z.object({ reviewed: z.boolean() }).passthrough() }).passthrough(), fetchedAt: z.string().nullable().optional(), verified: z.boolean().optional(), completedRunId: z.string().optional() }).safeParse(value);
+  const result = z.object({ data: z.object({ review: z.object({ reviewed: z.boolean() }).passthrough() }).passthrough(), fetchedAt: z.string().nullable().optional(), verified: z.boolean().optional(), completedRunId: z.string().nullish() }).safeParse(value);
   if (!result.success) return null;
   const raw = result.data.data;
   if (!result.data.verified && !result.data.completedRunId && !hasReviewFields(raw.review)) return null;

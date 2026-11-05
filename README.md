@@ -17,6 +17,7 @@ and reviewer feedback into an inspectable analytics workspace.
 [Quick start](#quick-start) &nbsp;·&nbsp;
 [How it works](#how-it-works) &nbsp;·&nbsp;
 [Collect reviews](#collect-linkedin-review-scores) &nbsp;·&nbsp;
+[Financials](#financials--greenlight) &nbsp;·&nbsp;
 [Documentation](#documentation)
 
 </div>
@@ -33,6 +34,7 @@ and reviewer feedback into an inspectable analytics workspace.
 | Authorized API pagination and rendered DOM rows | Combined filters, search and feedback inspection | CSV, JSON and JSONL exports |
 | Saved JSON/JSONL responses | Separate reviewer quality and task-answer results | Local snapshots with merge, replace and compare |
 | Resumable, user-started review enrichment | Transparent cache, request and completeness diagnostics | Your data on your device |
+| Native Greenlight time-response capture and rendered rates | Paid/pending earnings and confirmed batch-based estimates | A separate local financial ledger |
 
 **No backend. No AI API key. No cloud account. No telemetry.** This is an independent application, not an add-on to a browser evaluator extension.
 
@@ -162,6 +164,28 @@ See [review collection](docs/REVIEW_COLLECTION.md) for queue behavior and [reque
 </details>
 
 > **Verification boundary:** real signed-in LinkedIn collection remains **NOT VERIFIED** in the development environment. The confirmed detail contract and production execution paths are tested with isolated, sanitized fixtures—not a live account.
+
+## Financials · Greenlight
+
+Connect your authorized **Greenlight dashboard** to the same cache-first workspace:
+
+1. Open `https://portal.greenlight.ai/dashboard` and sign in normally.
+2. In **Financials**, choose **Find Greenlight tab**, approve the optional portal permission, and select that tab.
+3. Expand Deliverables and choose **Collect rendered week & rates** to save visible amounts and engagement rates.
+4. Open DevTools on Greenlight, choose **Start financial capture**, then reload the portal or navigate its weeks normally.
+5. Use **Capture previous week** for a bounded, one-week native navigation action, or import a saved raw time-response JSON.
+
+The website owns its authentication and time requests. **No bearer token, cookie or membership header is extracted or replayed.** Keep Greenlight and its DevTools open for capture.
+
+Financials shows paid/pending USD, task/review counts from batch notes, engagement/tag breakdowns, captured periods and filtered exports. Dashboard, popup and side panel show the same financial cache offline. For this account, **status 4 = Processed / paid; other statuses = pending**.
+
+Amounts are calculated in exact cents and deduplicated by supplier/deliverable ID. Correction notes count **Actual − Paid** tasks, not the entire corrected batch again. DOM amounts remain a separate fallback and are never added on top of API amounts.
+
+Annotation pipeline names and financial batch notes share a persisted normalized join key, preserving Set/date while removing the observed separate `- 320` segment. The saved project pipeline catalog can repair unnamed cached peers without re-fetching details. In **Annotations**, filter by batch and **Remaining to be paid**: remaining submitted work is **completed − paid**, including already-pending deliverables. Partial batches show aggregate coverage, not guessed individual paid IDs. **Financials → Rebuild cached batch joins** performs a local-only repair.
+
+Same-batch **observed paid earnings ÷ attributable paid tasks × remaining tasks** provides an automatic pending earnings estimate. The full ratio is retained until rounding the final total to cents; mixed-batch/work-type amounts are not arbitrarily divided. Actual pending payments remain separate and are not added twice. Explicit mappings and confirmed rates remain an alternative for **unbilled earnings estimates**. Displayed `$ / project` rates are not automatically assigned to every annotation; notes do not prove individual paid IDs. Missing periods, unknown rates and ambiguous counts remain explicit limitations.
+
+Financial data is separate from annotation snapshots and has its own clear/export controls. **Real signed-in Greenlight collection remains NOT VERIFIED in development.** See [Financials](docs/FINANCIALS.md) for semantics, privacy, accounting and manual validation.
 
 ## Read the right score
 
@@ -294,6 +318,7 @@ Keep the collection tab and target website open; website capture also requires i
 | [Network capture](docs/NETWORK_CAPTURE.md) | Actual Chrome capabilities and capture limitations |
 | [API discovery](docs/API_DISCOVERY.md) | Endpoint configuration, pagination and related-result joins |
 | [Review collection](docs/REVIEW_COLLECTION.md) | Website/API collection, caching, pacing and recovery |
+| [Financials](docs/FINANCIALS.md) | Greenlight native capture, payment accounting, corrections and batch estimates |
 | [Request debugging](docs/REVIEW_REQUEST_DEBUGGING.md) | Diagnostics, request contexts and real-session acceptance |
 | [Scoring](docs/SCORING.md) | Verified mappings, aggregation and score semantics |
 | [Security](docs/SECURITY.md) | Permissions, privacy boundaries and threat considerations |
